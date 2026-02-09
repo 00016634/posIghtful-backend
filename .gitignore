@@ -22,6 +22,7 @@ wheels/
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -33,10 +34,8 @@ db.sqlite3-journal
 /media
 /staticfiles
 *.pot
-*.pyc
 
 # Environment variables
-.env
 *.env
 !.env.example
 
@@ -46,7 +45,10 @@ db.sqlite3-journal
 *.swp
 *.swo
 *~
+
+# System files
 .DS_Store
+Thumbs.db
 
 # Misc
 *.bak
