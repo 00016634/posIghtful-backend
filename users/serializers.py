@@ -1,23 +1,27 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
-from .models import User, UserRole
+from .models import User, Role
 
 
-class UserRoleSerializer(serializers.ModelSerializer):
+class RoleSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserRole
-        fields = ['id', 'name', 'code', 'description']
+        model = Role
+        fields = ['id', 'code', 'name', 'description']
 
 
 class UserSerializer(serializers.ModelSerializer):
-    user_role = UserRoleSerializer(read_only=True)
+    roles = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'phone_number', 'full_name',
-                  'user_role', 'tenant', 'is_active', 'is_staff', 'created_at']
+                  'roles', 'tenant', 'is_active', 'is_staff', 'created_at']
         read_only_fields = ['id', 'created_at']
+
+    def get_roles(self, obj):
+        user_roles = obj.user_roles.select_related('role').all()
+        return RoleSerializer([ur.role for ur in user_roles], many=True).data
 
 
 class RegisterSerializer(serializers.ModelSerializer):

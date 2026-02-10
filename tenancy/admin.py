@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Tenant, Region, Outlet, Agent
+from .models import Tenant, Region, City, Product, Customer, Agent
 
 
 @admin.register(Tenant)
@@ -16,15 +16,29 @@ class RegionAdmin(admin.ModelAdmin):
     search_fields = ['name', 'code']
 
 
-@admin.register(Outlet)
-class OutletAdmin(admin.ModelAdmin):
-    list_display = ['id', 'name', 'code', 'outlet_type', 'region', 'tenant', 'is_active']
-    list_filter = ['outlet_type', 'is_active', 'tenant', 'region']
-    search_fields = ['name', 'code', 'address']
+@admin.register(City)
+class CityAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'code', 'region', 'tenant', 'is_active']
+    list_filter = ['is_active', 'tenant', 'region']
+    search_fields = ['name', 'code']
+
+
+@admin.register(Product)
+class ProductAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'code', 'category', 'tenant', 'is_active']
+    list_filter = ['is_active', 'tenant', 'category']
+    search_fields = ['name', 'code']
+
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = ['id', 'full_name', 'phone', 'tenant', 'created_at']
+    list_filter = ['tenant']
+    search_fields = ['full_name', 'phone']
 
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ['id', 'agent_code', 'user', 'outlet', 'status', 'hired_at', 'tenant']
-    list_filter = ['status', 'tenant', 'outlet', 'hired_at']
+    list_display = ['id', 'agent_code', 'user', 'region', 'city', 'status', 'hired_at', 'tenant']
+    list_filter = ['status', 'tenant', 'region', 'city', 'hired_at']
     search_fields = ['agent_code', 'user__email']
