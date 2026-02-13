@@ -45,6 +45,10 @@ urlpatterns = [
     # Authentication endpoints
     path('auth/', include('users.urls')),
 
-    # API endpoints (to be added later)
-    # path('api/', include('api.urls')),
+    # API endpoints
+    path('api/tenancy/', include('tenancy.urls')),
+    path('api/leads/', include('leads.urls')),
+    path('api/conversions/', include('conversions.urls')),
+    path('api/bonuses/', include('bonuses.urls')),
+    path('api/analytics/', include('analytics.urls')),
 ]
