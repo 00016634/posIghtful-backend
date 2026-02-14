@@ -11,9 +11,10 @@ from .serializers import (
     RegisterSerializer,
     LoginSerializer,
     UserSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer,
+    RoleSerializer,
 )
-from .models import User
+from .models import User, Role
 
 
 @swagger_auto_schema(
@@ -174,3 +175,21 @@ def change_password_view(request):
         return Response({'message': 'Password changed successfully'}, status=status.HTTP_200_OK)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@swagger_auto_schema(
+    method='get',
+    responses={
+        200: RoleSerializer(many=True),
+    },
+    operation_description="List all available roles"
+)
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def role_list_view(request):
+    """
+    List all available roles with their permissions, color, and icon.
+    """
+    roles = Role.objects.all().order_by('id')
+    serializer = RoleSerializer(roles, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)

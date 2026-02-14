@@ -12,6 +12,12 @@ class Role(models.Model):
     code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
+    permissions = models.JSONField(
+        default=dict, blank=True,
+        help_text='e.g. {"leads": ["view","create","update"], "users": ["view"]}'
+    )
+    color = models.CharField(max_length=30, blank=True, default='blue')
+    icon = models.CharField(max_length=50, blank=True, default='user')
 
     class Meta:
         db_table = 'roles'

@@ -12,4 +12,7 @@ urlpatterns = [
     # User profile endpoints
     path('profile/', views.profile_view, name='profile'),
     path('change-password/', views.change_password_view, name='change_password'),
+
+    # Roles
+    path('roles/', views.role_list_view, name='roles'),
 ]
