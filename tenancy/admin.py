@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Tenant, Region, City, Product, Customer, Agent
+from .models import Tenant, Region, City, Product, Customer, Agent, SubscriptionPlan, Subscription, Payment
 
 
 @admin.register(Tenant)
@@ -42,3 +42,24 @@ class AgentAdmin(admin.ModelAdmin):
     list_display = ['id', 'agent_code', 'user', 'region', 'city', 'status', 'hired_at', 'tenant']
     list_filter = ['status', 'tenant', 'region', 'city', 'hired_at']
     search_fields = ['agent_code', 'user__email']
+
+
+@admin.register(SubscriptionPlan)
+class SubscriptionPlanAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'price', 'max_agents', 'storage_limit', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['name']
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ['id', 'tenant', 'plan', 'status', 'trial_end', 'current_period_end']
+    list_filter = ['status', 'plan']
+    search_fields = ['tenant__name']
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ['id', 'tenant', 'amount', 'currency', 'status', 'card_first4', 'card_last4', 'created_at']
+    list_filter = ['status', 'currency']
+    search_fields = ['tenant__name', 'cardholder_name', 'billing_email']

@@ -12,4 +12,6 @@ router.register(r'agents', views.AgentViewSet, basename='agent')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('plans/', views.plan_list_view, name='plan-list'),
+    path('onboarding/', views.onboarding_view, name='onboarding'),
 ]
