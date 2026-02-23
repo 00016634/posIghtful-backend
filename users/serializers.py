@@ -87,6 +87,55 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError('Must include "username" and "password".')
 
 
+class UserManagementSerializer(serializers.ModelSerializer):
+    roles = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
+    region = serializers.SerializerMethodField()
+    supervisor = serializers.SerializerMethodField()
+    agentCode = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'phone_number', 'full_name',
+            'roles', 'role', 'region', 'supervisor', 'agentCode',
+            'tenant', 'is_active', 'is_staff', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_roles(self, obj):
+        user_roles = obj.user_roles.select_related('role').all()
+        return RoleSerializer([ur.role for ur in user_roles], many=True).data
+
+    def get_role(self, obj):
+        ur = obj.user_roles.select_related('role').first()
+        return ur.role.code.lower() if ur else 'agent'
+
+    def get_region(self, obj):
+        agent = getattr(obj, 'agent_profile', None)
+        if agent:
+            a = agent.select_related('region').first()
+            if a and a.region:
+                return a.region.name
+        return ''
+
+    def get_supervisor(self, obj):
+        agent = getattr(obj, 'agent_profile', None)
+        if agent:
+            a = agent.select_related('parent__user').first()
+            if a and a.parent and a.parent.user:
+                return a.parent.user.full_name or ''
+        return ''
+
+    def get_agentCode(self, obj):
+        agent = getattr(obj, 'agent_profile', None)
+        if agent:
+            a = agent.first()
+            if a:
+                return a.agent_code or ''
+        return ''
+
+
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True, write_only=True)
     new_password = serializers.CharField(required=True, write_only=True, validators=[validate_password])

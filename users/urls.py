@@ -1,6 +1,10 @@
-from django.urls import path
+from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework.routers import DefaultRouter
 from . import views
+
+router = DefaultRouter()
+router.register(r'users', views.UserViewSet, basename='user')
 
 urlpatterns = [
     # Authentication endpoints
@@ -15,4 +19,12 @@ urlpatterns = [
 
     # Roles
     path('roles/', views.role_list_view, name='roles'),
+
+    # Admin / management endpoints
+    path('admin-stats/', views.admin_stats_view, name='admin-stats'),
+    path('recent-activity/', views.recent_activity_view, name='recent-activity'),
+    path('accountant-data/', views.accountant_data_view, name='accountant-data'),
+
+    # User CRUD (via router)
+    path('', include(router.urls)),
 ]

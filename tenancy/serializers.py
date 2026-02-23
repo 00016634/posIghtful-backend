@@ -14,7 +14,7 @@ class RegionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Region
         fields = ['id', 'tenant', 'name', 'code', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class CitySerializer(serializers.ModelSerializer):
@@ -23,21 +23,21 @@ class CitySerializer(serializers.ModelSerializer):
     class Meta:
         model = City
         fields = ['id', 'tenant', 'region', 'region_name', 'name', 'code', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = ['id', 'tenant', 'code', 'name', 'category', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
         fields = ['id', 'tenant', 'user', 'full_name', 'phone', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class AgentSerializer(serializers.ModelSerializer):
@@ -53,7 +53,7 @@ class AgentSerializer(serializers.ModelSerializer):
             'agent_code', 'region', 'region_name', 'city', 'city_name',
             'hired_at', 'terminated_at', 'status', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):

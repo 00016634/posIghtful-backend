@@ -8,4 +8,6 @@ router.register(r'rules', views.BonusRuleViewSet, basename='bonus-rule')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('monthly/', views.monthly_bonuses_view, name='monthly-bonuses'),
+    path('monthly/<str:month>/', views.monthly_bonus_detail_view, name='monthly-bonus-detail'),
 ]
