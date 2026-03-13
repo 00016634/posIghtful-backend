@@ -81,6 +81,31 @@ def uz_full_name():
     return f'{first} {last}', first, last
 
 
+def _force_dates(model_class, pk, created_at=None, updated_at=None):
+    """
+    Force-set auto_now_add / auto_now fields by using QuerySet.update(),
+    which bypasses Django's auto_now/auto_now_add behavior.
+    """
+    update_kwargs = {}
+    if created_at is not None:
+        update_kwargs['created_at'] = created_at
+    if updated_at is not None:
+        update_kwargs['updated_at'] = updated_at
+    if update_kwargs:
+        model_class.objects.filter(pk=pk).update(**update_kwargs)
+
+
+def _random_datetime(now, days_ago_max, days_ago_min=0):
+    """Generate a random datetime between days_ago_min and days_ago_max before now."""
+    days_ago = random.randint(days_ago_min, days_ago_max)
+    return now - datetime.timedelta(
+        days=days_ago,
+        hours=random.randint(0, 23),
+        minutes=random.randint(0, 59),
+        seconds=random.randint(0, 59),
+    )
+
+
 class Command(BaseCommand):
     help = (
         'Populate the database with realistic random data using Faker.\n'
@@ -264,40 +289,50 @@ class Command(BaseCommand):
             }
 
             # ── Tenant ─────────────────────────────────────────
+            # Tenant was "founded" 6-18 months ago
+            tenant_created_at = _random_datetime(now, days_ago_max=540, days_ago_min=180)
+
             tenant, _ = Tenant.objects.update_or_create(
                 code=tenant_code,
                 defaults={'name': tenant_name, 'is_active': True}
             )
+            _force_dates(Tenant, tenant.pk,
+                         created_at=tenant_created_at, updated_at=tenant_created_at)
 
             # ── Subscription ───────────────────────────────────
             chosen_plan = plan_objs[1]  # Professional
+            sub_created_at = tenant_created_at + datetime.timedelta(
+                minutes=random.randint(1, 60))
+
             sub, _ = Subscription.objects.update_or_create(
                 tenant=tenant,
                 defaults={
                     'plan': chosen_plan,
                     'status': 'active',
-                    'current_period_start': now,
-                    'current_period_end': now + datetime.timedelta(days=30),
+                    'current_period_start': now - datetime.timedelta(days=random.randint(0, 29)),
+                    'current_period_end': now + datetime.timedelta(days=random.randint(1, 30)),
                 }
             )
+            _force_dates(Subscription, sub.pk,
+                         created_at=sub_created_at, updated_at=sub_created_at)
 
             # ── Payment history ────────────────────────────────
             for m in range(3):
-                Payment.objects.get_or_create(
+                payment_date = now - datetime.timedelta(days=30 * (m + 1))
+                pay = Payment.objects.create(
                     tenant=tenant,
                     subscription=sub,
                     amount=chosen_plan.price,
                     status='completed',
-                    created_at=now - datetime.timedelta(days=30 * (m + 1)),
-                    defaults={
-                        'card_brand': random.choice(['Visa', 'MasterCard', 'Humo', 'UzCard']),
-                        'card_first4': str(random.randint(4000, 5999)),
-                        'card_last4': str(random.randint(1000, 9999)),
-                        'cardholder_name': tenant_name,
-                        'billing_email': f'billing@{tenant_code}.uz',
-                        'currency': 'USD',
-                    }
+                    card_brand=random.choice(['Visa', 'MasterCard', 'Humo', 'UzCard']),
+                    card_first4=str(random.randint(4000, 5999)),
+                    card_last4=str(random.randint(1000, 9999)),
+                    cardholder_name=tenant_name,
+                    billing_email=f'billing@{tenant_code}.uz',
+                    currency='USD',
                 )
+                _force_dates(Payment, pay.pk,
+                             created_at=payment_date, updated_at=payment_date)
 
             # ── Regions & Cities ───────────────────────────────
             self.stdout.write('  Creating regions & cities...')
@@ -307,17 +342,24 @@ class Command(BaseCommand):
             ))
             region_objs = {}
             city_objs = {}
+            # Regions/cities created when tenant was set up
+            setup_date = tenant_created_at + datetime.timedelta(hours=random.randint(1, 24))
+
             for rname, cities in selected_regions.items():
                 region, _ = Region.objects.update_or_create(
                     tenant=tenant, name=rname,
                     defaults={'code': rname[:3].upper(), 'is_active': True}
                 )
+                _force_dates(Region, region.pk,
+                             created_at=setup_date, updated_at=setup_date)
                 region_objs[rname] = region
                 for cname in cities:
                     city, _ = City.objects.update_or_create(
                         tenant=tenant, region=region, name=cname,
                         defaults={'code': cname[:3].upper(), 'is_active': True}
                     )
+                    _force_dates(City, city.pk,
+                                 created_at=setup_date, updated_at=setup_date)
                     city_objs[cname] = city
             self.stdout.write(self.style.SUCCESS(
                 f'    {len(region_objs)} regions, {len(city_objs)} cities'))
@@ -325,16 +367,18 @@ class Command(BaseCommand):
             # ── Products ───────────────────────────────────────
             self.stdout.write('  Creating products...')
             product_objs = []
+            product_setup_date = setup_date + datetime.timedelta(hours=random.randint(1, 12))
             for pd in PRODUCTS:
                 prod, _ = Product.objects.update_or_create(
                     tenant=tenant, code=pd['code'],
                     defaults={'name': pd['name'], 'category': pd['category'], 'is_active': True}
                 )
+                _force_dates(Product, prod.pk,
+                             created_at=product_setup_date, updated_at=product_setup_date)
                 product_objs.append(prod)
             self.stdout.write(self.style.SUCCESS(f'    {len(product_objs)} products'))
 
             all_region_names = list(region_objs.keys())
-            all_city_names = list(city_objs.keys())
             used_phones = set()
             agent_counter = 0
 
@@ -347,7 +391,10 @@ class Command(BaseCommand):
 
             def _create_user_and_agent(username, full_name, email, phone,
                                        role_code, region_name, city_name, agent_code,
-                                       parent_agent=None):
+                                       parent_agent=None, user_created_at=None):
+                if user_created_at is None:
+                    user_created_at = _random_datetime(now, days_ago_max=300, days_ago_min=30)
+
                 user, created = User.objects.update_or_create(
                     username=username,
                     defaults={
@@ -364,10 +411,19 @@ class Command(BaseCommand):
                     user.set_password(DEFAULT_PASSWORD)
                     user.save()
 
-                UserRole.objects.update_or_create(
+                # Force user dates
+                _force_dates(User, user.pk,
+                             created_at=user_created_at, updated_at=user_created_at)
+
+                # UserRole assigned_at
+                ur, _ = UserRole.objects.update_or_create(
                     tenant=tenant, user=user, role=roles[role_code]
                 )
+                UserRole.objects.filter(pk=ur.pk).update(
+                    assigned_at=user_created_at + datetime.timedelta(minutes=random.randint(1, 30)))
 
+                hired_at = user_created_at.date() - datetime.timedelta(
+                    days=random.randint(0, 60))
                 agent, _ = Agent.objects.update_or_create(
                     tenant=tenant, agent_code=agent_code,
                     defaults={
@@ -375,11 +431,13 @@ class Command(BaseCommand):
                         'region': region_objs[region_name],
                         'city': city_objs[city_name],
                         'parent': parent_agent,
-                        'hired_at': (datetime.date(2023, 1, 1)
-                                     + datetime.timedelta(days=random.randint(0, 500))),
+                        'hired_at': hired_at,
                         'status': 'active',
                     }
                 )
+                _force_dates(Agent, agent.pk,
+                             created_at=user_created_at, updated_at=user_created_at)
+
                 return user, agent
 
             # ── Admin ──────────────────────────────────────────
@@ -391,9 +449,13 @@ class Command(BaseCommand):
             r_name = all_region_names[0]
             c_name = list(selected_regions[r_name])[0]
 
+            # Admin created right after tenant
+            admin_created = tenant_created_at + datetime.timedelta(
+                minutes=random.randint(5, 120))
             admin_user, admin_agent = _create_user_and_agent(
                 admin_username, admin_full, admin_email, admin_phone,
-                'ADMIN', r_name, c_name, f'{tenant_code[:4].upper()}-ADM-001'
+                'ADMIN', r_name, c_name, f'{tenant_code[:4].upper()}-ADM-001',
+                user_created_at=admin_created
             )
             tenant_report['admin'] = {
                 'username': admin_username, 'full_name': admin_full,
@@ -408,9 +470,13 @@ class Command(BaseCommand):
             mgr_email = f'{mgr_first.lower()}.mgr@{tenant_code}.uz'
             mgr_phone = _unique_phone()
 
+            # Manager joined shortly after admin
+            mgr_created = admin_created + datetime.timedelta(
+                days=random.randint(1, 14), hours=random.randint(0, 23))
             mgr_user, mgr_agent = _create_user_and_agent(
                 mgr_username, mgr_full, mgr_email, mgr_phone,
-                'MANAGER', r_name, c_name, f'{tenant_code[:4].upper()}-MGR-001'
+                'MANAGER', r_name, c_name, f'{tenant_code[:4].upper()}-MGR-001',
+                user_created_at=mgr_created
             )
             tenant_report['managers'].append({
                 'username': mgr_username, 'full_name': mgr_full,
@@ -425,9 +491,12 @@ class Command(BaseCommand):
             fin_email = f'{fin_first.lower()}.fin@{tenant_code}.uz'
             fin_phone = _unique_phone()
 
+            fin_created = admin_created + datetime.timedelta(
+                days=random.randint(3, 21), hours=random.randint(0, 23))
             fin_user, fin_agent = _create_user_and_agent(
                 fin_username, fin_full, fin_email, fin_phone,
-                'FINANCE', r_name, c_name, f'{tenant_code[:4].upper()}-FIN-001'
+                'FINANCE', r_name, c_name, f'{tenant_code[:4].upper()}-FIN-001',
+                user_created_at=fin_created
             )
             tenant_report['finance'].append({
                 'username': fin_username, 'full_name': fin_full,
@@ -448,10 +517,16 @@ class Command(BaseCommand):
                 sup_region = all_region_names[s_idx % len(all_region_names)]
                 sup_city = selected_regions[sup_region][0]
 
+                # Supervisors joined after manager, staggered
+                sup_created = mgr_created + datetime.timedelta(
+                    days=random.randint(1, 30) + s_idx * 7,
+                    hours=random.randint(0, 23))
+
                 sup_user, sup_agent = _create_user_and_agent(
                     sup_username, sup_full, sup_email, sup_phone,
                     'SUPERVISOR', sup_region, sup_city,
-                    f'{tenant_code[:4].upper()}-SUP-{s_idx + 1:03d}'
+                    f'{tenant_code[:4].upper()}-SUP-{s_idx + 1:03d}',
+                    user_created_at=sup_created
                 )
                 supervisor_agents.append(sup_agent)
 
@@ -472,11 +547,21 @@ class Command(BaseCommand):
                     ag_region = sup_region
                     ag_city = random.choice(selected_regions[ag_region])
 
+                    # Agents joined after their supervisor, staggered
+                    ag_created = sup_created + datetime.timedelta(
+                        days=random.randint(3, 45) + a_idx * 5,
+                        hours=random.randint(0, 23))
+                    # Don't let agent creation go past "now"
+                    if ag_created > now:
+                        ag_created = now - datetime.timedelta(
+                            days=random.randint(1, 30))
+
                     ag_user, ag_agent = _create_user_and_agent(
                         ag_username, ag_full, ag_email, ag_phone,
                         'AGENT', ag_region, ag_city,
                         f'{tenant_code[:4].upper()}-AG-{agent_counter:03d}',
-                        parent_agent=sup_agent
+                        parent_agent=sup_agent,
+                        user_created_at=ag_created
                     )
                     all_field_agents.append(ag_agent)
 
@@ -539,18 +624,27 @@ class Command(BaseCommand):
 
             pipelines = {}
             stages = {}
+            pipeline_setup_date = product_setup_date + datetime.timedelta(
+                hours=random.randint(1, 12))
+
             for prod in product_objs:
                 if prod.code in pipeline_definitions:
                     pipeline, _ = LeadPipeline.objects.update_or_create(
                         tenant=tenant, product=prod, name=f'{prod.name} Pipeline',
                         defaults={'is_active': True}
                     )
+                    _force_dates(LeadPipeline, pipeline.pk,
+                                 created_at=pipeline_setup_date,
+                                 updated_at=pipeline_setup_date)
                     pipelines[prod.id] = pipeline
                     for sname, sorder, is_terminal in pipeline_definitions[prod.code]:
                         stage, _ = LeadStage.objects.update_or_create(
                             tenant=tenant, pipeline=pipeline, stage_order=sorder,
                             defaults={'name': sname, 'is_terminal': is_terminal, 'is_active': True}
                         )
+                        _force_dates(LeadStage, stage.pk,
+                                     created_at=pipeline_setup_date,
+                                     updated_at=pipeline_setup_date)
                         stages[(prod.id, sorder)] = stage
             self.stdout.write(self.style.SUCCESS(f'    {len(pipelines)} pipelines with stages'))
 
@@ -559,11 +653,15 @@ class Command(BaseCommand):
             customer_objs = []
             for _ in range(num_customers):
                 c_full, c_first, c_last = uz_full_name()
-                cust, _ = Customer.objects.get_or_create(
+                cust_created = _random_datetime(now, days_ago_max=kpi_days, days_ago_min=0)
+                cust, created = Customer.objects.get_or_create(
                     tenant=tenant,
                     phone=_unique_phone(),
                     defaults={'full_name': c_full}
                 )
+                if created:
+                    _force_dates(Customer, cust.pk,
+                                 created_at=cust_created, updated_at=cust_created)
                 customer_objs.append(cust)
             self.stdout.write(self.style.SUCCESS(f'    {len(customer_objs)} customers'))
 
@@ -574,7 +672,7 @@ class Command(BaseCommand):
                 agent = random.choice(all_field_agents)
                 customer = random.choice(customer_objs)
                 days_ago = random.randint(0, kpi_days)
-                created_at = now - datetime.timedelta(
+                lead_created_at = now - datetime.timedelta(
                     days=days_ago, hours=random.randint(0, 23),
                     minutes=random.randint(0, 59))
 
@@ -587,8 +685,11 @@ class Command(BaseCommand):
                     interaction_type=random.choice(INTERACTION_TYPES),
                     latitude=Decimal(str(round(random.uniform(37.5, 42.5), 6))),
                     longitude=Decimal(str(round(random.uniform(56.0, 71.0), 6))),
-                    server_received_at=created_at,
+                    server_received_at=lead_created_at,
                 )
+                # Force lead dates to match the simulated creation time
+                _force_dates(Lead, lead.pk,
+                             created_at=lead_created_at, updated_at=lead_created_at)
                 lead_objs.append(lead)
 
                 # Create 1-2 lead applications per lead
@@ -605,6 +706,11 @@ class Command(BaseCommand):
                             stage_order = random.randint(1, max_stage)
                         stage = stages.get((prod.id, stage_order))
                         if stage:
+                            app_created_at = lead_created_at + datetime.timedelta(
+                                minutes=random.randint(1, 120))
+                            status_updated = lead_created_at + datetime.timedelta(
+                                hours=random.randint(1, 48))
+
                             app = LeadApplication.objects.create(
                                 tenant=tenant,
                                 lead=lead,
@@ -612,22 +718,25 @@ class Command(BaseCommand):
                                 pipeline=pipeline,
                                 current_stage=stage,
                                 is_primary=(i == 0),
-                                status_last_updated_at=created_at + datetime.timedelta(
-                                    hours=random.randint(1, 48)),
+                                status_last_updated_at=status_updated,
                             )
+                            _force_dates(LeadApplication, app.pk,
+                                         created_at=app_created_at,
+                                         updated_at=status_updated)
+
                             if i == 0:
                                 lead.primary_application = app
                                 lead.save(update_fields=['primary_application'])
 
                             # Create stage history
-                            history_time = created_at
+                            history_time = lead_created_at
                             for s_order in range(1, stage_order + 1):
                                 from_s = stages.get((prod.id, s_order - 1))
                                 to_s = stages.get((prod.id, s_order))
                                 if to_s:
                                     history_time += datetime.timedelta(
                                         hours=random.randint(2, 72))
-                                    hist = LeadStageHistory.objects.create(
+                                    LeadStageHistory.objects.create(
                                         tenant=tenant,
                                         lead=lead,
                                         lead_application=app,
@@ -653,7 +762,9 @@ class Command(BaseCommand):
                 customer = random.choice(customer_objs)
                 prod = random.choice(product_objs)
                 days_ago = random.randint(0, kpi_days)
-                sold_at = now - datetime.timedelta(days=days_ago)
+                sold_at = now - datetime.timedelta(
+                    days=days_ago, hours=random.randint(0, 23),
+                    minutes=random.randint(0, 59))
                 amount = Decimal(str(random.randint(500, 15000)))
 
                 lead = Lead.objects.filter(
@@ -679,11 +790,17 @@ class Command(BaseCommand):
                     )[0],
                     sold_at=sold_at,
                 )
+                # Force sale created_at to match sold_at
+                _force_dates(Sale, sale.pk,
+                             created_at=sold_at, updated_at=sold_at)
                 sale_count += 1
             self.stdout.write(self.style.SUCCESS(f'    {sale_count} sales'))
 
             # ── Bonus Rules ────────────────────────────────────
             self.stdout.write('  Creating bonus rules...')
+            bonus_created = tenant_created_at + datetime.timedelta(
+                days=random.randint(7, 30))
+
             bonus_rules = [
                 {
                     'name': 'High Value Sale Bonus',
@@ -694,7 +811,7 @@ class Command(BaseCommand):
                     'amount_value': Decimal('15.0000'),
                     'cap_amount': Decimal('2000'),
                     'is_active': True,
-                    'effective_from': now - datetime.timedelta(days=365),
+                    'effective_from': tenant_created_at,
                 },
                 {
                     'name': 'Quick Conversion Bonus',
@@ -704,7 +821,7 @@ class Command(BaseCommand):
                     'amount_type': 'fixed',
                     'amount_value': Decimal('150.0000'),
                     'is_active': True,
-                    'effective_from': now - datetime.timedelta(days=365),
+                    'effective_from': tenant_created_at,
                 },
                 {
                     'name': 'Premium Product Commission',
@@ -715,7 +832,7 @@ class Command(BaseCommand):
                     'amount_value': Decimal('12.0000'),
                     'cap_amount': Decimal('1500'),
                     'is_active': True,
-                    'effective_from': now - datetime.timedelta(days=365),
+                    'effective_from': tenant_created_at,
                 },
                 {
                     'name': 'New Agent Welcome Bonus',
@@ -725,7 +842,7 @@ class Command(BaseCommand):
                     'amount_type': 'fixed',
                     'amount_value': Decimal('50.0000'),
                     'is_active': True,
-                    'effective_from': now - datetime.timedelta(days=180),
+                    'effective_from': tenant_created_at + datetime.timedelta(days=30),
                 },
                 {
                     'name': 'Enterprise Deal Bonus',
@@ -736,26 +853,30 @@ class Command(BaseCommand):
                     'amount_value': Decimal('20.0000'),
                     'cap_amount': Decimal('5000'),
                     'is_active': True,
-                    'effective_from': now - datetime.timedelta(days=365),
+                    'effective_from': tenant_created_at,
                 },
             ]
             for br_data in bonus_rules:
                 name = br_data.pop('name')
-                BonusRule.objects.update_or_create(
+                br, _ = BonusRule.objects.update_or_create(
                     tenant=tenant, name=name, defaults=br_data
                 )
+                _force_dates(BonusRule, br.pk,
+                             created_at=bonus_created, updated_at=bonus_created)
             self.stdout.write(self.style.SUCCESS(f'    {len(bonus_rules)} bonus rules'))
 
             # ── Commission Policy ──────────────────────────────
-            CommissionPolicy.objects.update_or_create(
+            cp, _ = CommissionPolicy.objects.update_or_create(
                 tenant=tenant, name='Default Attribution Policy',
                 defaults={
                     'mode': 'LAST_TOUCH',
                     'window_interval': datetime.timedelta(days=30),
-                    'effective_from': now - datetime.timedelta(days=365),
+                    'effective_from': tenant_created_at,
                     'is_active': True,
                 }
             )
+            _force_dates(CommissionPolicy, cp.pk,
+                         created_at=bonus_created, updated_at=bonus_created)
 
             # ── KPI Agent Daily ────────────────────────────────
             self.stdout.write('  Creating KPI daily records...')
@@ -776,7 +897,14 @@ class Command(BaseCommand):
                     bonus = Decimal(str(round(float(revenue) * random.uniform(0.05, 0.18), 2)))
                     net_profit = revenue - bonus
 
-                    KPIAgentDaily.objects.update_or_create(
+                    # KPI record "created" at end of that day (e.g. nightly job)
+                    kpi_created_at = timezone.make_aware(
+                        datetime.datetime.combine(
+                            kpi_date, datetime.time(23, random.randint(0, 59), random.randint(0, 59))
+                        )
+                    )
+
+                    kpi, _ = KPIAgentDaily.objects.update_or_create(
                         tenant=tenant, agent=agent, kpi_date=kpi_date,
                         defaults={
                             'leads_captured': leads_captured,
@@ -789,6 +917,8 @@ class Command(BaseCommand):
                                 hours=random.randint(1, 96)),
                         }
                     )
+                    KPIAgentDaily.objects.filter(pk=kpi.pk).update(
+                        created_at=kpi_created_at)
                     kpi_count += 1
             self.stdout.write(self.style.SUCCESS(f'    {kpi_count} KPI daily records'))
 
