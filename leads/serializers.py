@@ -8,7 +8,7 @@ class LeadPipelineSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeadPipeline
         fields = ['id', 'tenant', 'product', 'product_name', 'name', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class LeadStageSerializer(serializers.ModelSerializer):
@@ -20,7 +20,7 @@ class LeadStageSerializer(serializers.ModelSerializer):
             'id', 'tenant', 'pipeline', 'pipeline_name', 'name',
             'stage_order', 'is_terminal', 'is_active', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class LeadStageHistorySerializer(serializers.ModelSerializer):
@@ -34,7 +34,7 @@ class LeadStageHistorySerializer(serializers.ModelSerializer):
             'from_stage', 'from_stage_name', 'to_stage', 'to_stage_name',
             'changed_at', 'note',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'tenant']
 
 
 class LeadApplicationSerializer(serializers.ModelSerializer):
@@ -48,7 +48,7 @@ class LeadApplicationSerializer(serializers.ModelSerializer):
             'pipeline', 'app_id', 'current_stage', 'current_stage_name',
             'status_last_updated_at', 'is_primary', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class LeadSerializer(serializers.ModelSerializer):
@@ -64,4 +64,4 @@ class LeadSerializer(serializers.ModelSerializer):
             'server_received_at', 'created_at', 'updated_at',
             'applications',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']

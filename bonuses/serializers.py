@@ -10,7 +10,7 @@ class CommissionPolicySerializer(serializers.ModelSerializer):
             'effective_from', 'effective_to', 'is_active',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
 
 
 class BonusRuleSerializer(serializers.ModelSerializer):
@@ -25,4 +25,4 @@ class BonusRuleSerializer(serializers.ModelSerializer):
             'effective_from', 'effective_to',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']

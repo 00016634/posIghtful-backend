@@ -30,6 +30,7 @@ backend/
 ├── conversions/         # Sales conversions and external imports
 ├── bonuses/             # Bonus calculation engine
 ├── analytics/           # KPI and reporting models
+├── populate_data/       # Database population with random data
 └── manage.py
 ```
 
@@ -210,6 +211,89 @@ Access tokens expire after 1 hour. Use the refresh token endpoint to get a new a
 ### Analytics Module
 - **KPIAgentDaily**: Agent performance metrics
 - **KPIOutletDaily**: Outlet performance metrics
+
+## Populating the Database
+
+Use the `populate` management command to fill the database with realistic random data for development and testing. It creates tenants, users (with role hierarchy), regions, cities, products, customers, leads, sales, bonus rules, and KPI records. A `credentials.txt` file is generated with all login info and team hierarchy.
+
+### Basic Usage
+
+```bash
+# Populate with default settings (1 tenant, 3 supervisors, 4 agents each)
+python manage.py populate
+
+# Flush all existing data first, then populate fresh
+python manage.py populate --flush
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tenants` | 1 | Number of tenants to create |
+| `--supervisors` | 3 | Number of supervisors per tenant |
+| `--agents-per-supervisor` | 4 | Number of agents under each supervisor |
+| `--customers` | 80 | Number of customers per tenant |
+| `--leads` | 120 | Number of leads per tenant |
+| `--sales` | 60 | Number of sales per tenant |
+| `--kpi-days` | 90 | Days of KPI history to generate |
+| `--output` | `credentials.txt` | Output file for credentials report |
+| `--flush` | off | Delete all existing data before populating |
+
+### Examples
+
+```bash
+# Large dataset with 2 tenants
+python manage.py populate --tenants 2 --supervisors 5 --agents-per-supervisor 6 --leads 300 --sales 150
+
+# Small dataset for quick testing
+python manage.py populate --flush --supervisors 1 --agents-per-supervisor 2 --leads 20 --sales 10
+
+# Custom output file
+python manage.py populate --output my_credentials.txt
+```
+
+### Generated Data
+
+Per tenant the command creates:
+- 1 Admin, 1 Manager, 1 Accountant
+- N Supervisors, each with M Agents (hierarchical parent relationship)
+- 6 regions with ~17 cities (randomly selected from Uzbekistan)
+- 8 products (POS hardware, software, services)
+- Lead pipelines with stages and stage history
+- Sales linked to leads where possible
+- 5 bonus rules and 1 commission policy
+- Daily KPI records for all agents
+
+### Credentials File
+
+After running, check `credentials.txt` (or your custom `--output` path) in the backend root. It shows the full team hierarchy:
+
+```
+══════════════════════════════════════════════════════════════════
+  TENANT: Brother Corp  (code: brother-corp)
+──────────────────────────────────────────────────────────────────
+
+  ★ ADMIN
+    Name     : Islom Mirzayev
+    Username : islom_brothe
+    Password : Pass1234!
+
+  ★ MANAGER
+    Name     : Behruz Karimov
+    Username : behruz_brothe_mgr
+    Password : Pass1234!
+
+  ★ SUPERVISOR — Tashkent Region
+    Name     : Ulugbek Pardayev
+    Username : ulugbek_brothe_sup1
+
+      ↳ AGENT — Angren
+        Name     : Xurshid Pardayev
+        Username : xurshid_brothe_ag1
+```
+
+All users share the password: `Pass1234!`
 
 ## Development Notes
 

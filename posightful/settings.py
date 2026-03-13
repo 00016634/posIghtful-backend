@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'conversions',
     'bonuses',
     'analytics',
+    'populate_data',
 ]
 
 MIDDLEWARE = [

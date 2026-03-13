@@ -15,4 +15,4 @@ class SaleSerializer(serializers.ModelSerializer):
             'product', 'product_name', 'amount', 'status',
             'sold_at', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']

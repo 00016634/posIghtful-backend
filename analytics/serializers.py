@@ -13,4 +13,4 @@ class KPIAgentDailySerializer(serializers.ModelSerializer):
             'revenue_amount', 'bonus_amount', 'net_profit',
             'avg_time_to_convert', 'created_at',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'tenant', 'created_at']

@@ -58,6 +58,19 @@ class LeadViewSet(TenantScopedViewSet):
             'tenant', 'agent', 'customer', 'primary_application'
         ).prefetch_related('applications__product', 'applications__current_stage').all()
 
+    def perform_create(self, serializer):
+        from tenancy.models import Agent
+        kwargs = {}
+        user = self.request.user
+        if user.tenant_id:
+            kwargs['tenant'] = user.tenant
+        # Auto-assign agent from the logged-in user's agent profile
+        if not serializer.validated_data.get('agent'):
+            agent = Agent.objects.filter(user=user, tenant=user.tenant).first()
+            if agent:
+                kwargs['agent'] = agent
+        serializer.save(**kwargs)
+
 
 class LeadApplicationViewSet(TenantScopedViewSet):
     serializer_class = LeadApplicationSerializer
