@@ -192,7 +192,8 @@ def supervisor_dashboard(request):
     last_revenue = float(last_kpi['total_revenue'] or 0)
 
     if last_revenue > 0:
-        rev_trend = f'+{int(((total_revenue - last_revenue) / last_revenue) * 100)}% from last month'
+        rev_pct = int(((total_revenue - last_revenue) / last_revenue) * 100)
+        rev_trend = f'{rev_pct:+d}% from last month'
     else:
         rev_trend = 'No data last month'
 
@@ -476,7 +477,13 @@ def performance_chart(request):
 
     qs = _tenant_kpi_qs(request).filter(
         kpi_date__gte=four_weeks_ago,
-    ).annotate(
+    )
+
+    agent_id = request.query_params.get('agent_id')
+    if agent_id:
+        qs = qs.filter(agent_id=agent_id)
+
+    qs = qs.annotate(
         week=TruncWeek('kpi_date')
     ).values('week').annotate(
         leads=Sum('leads_captured'),
@@ -497,4 +504,53 @@ def performance_chart(request):
             {'name': 'Leads', 'data': leads_data, 'color': '#3b82f6'},
             {'name': 'Conversions', 'data': conv_data, 'color': '#10b981'},
         ],
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def agent_stats(request, agent_id):
+    """Stats for a specific agent: total leads, conversions, revenue, bonus."""
+    now = timezone.now().date()
+    month_start = now.replace(day=1)
+
+    qs = _tenant_kpi_qs(request).filter(agent_id=agent_id)
+    month_qs = qs.filter(kpi_date__gte=month_start, kpi_date__lte=now)
+
+    totals = qs.aggregate(
+        total_leads=Sum('leads_captured'),
+        total_converted=Sum('leads_converted'),
+        total_revenue=Sum('revenue_amount'),
+        total_bonus=Sum('bonus_amount'),
+    )
+
+    month_totals = month_qs.aggregate(
+        month_bonus=Sum('bonus_amount'),
+    )
+
+    total_leads = totals['total_leads'] or 0
+    total_converted = totals['total_converted'] or 0
+    total_revenue = float(totals['total_revenue'] or 0)
+    total_bonus = float(totals['total_bonus'] or 0)
+    month_bonus = float(month_totals['month_bonus'] or 0)
+
+    from leads.models import Lead
+    from tenancy.models import Agent
+    agent = Agent.objects.filter(id=agent_id).first()
+    pending_leads = 0
+    if agent:
+        pending_leads = Lead.objects.filter(
+            agent=agent, tenant=agent.tenant_id,
+        ).exclude(
+            applications__current_stage__is_terminal=True
+        ).count()
+
+    return Response({
+        'totalLeads': total_leads,
+        'conversions': total_converted,
+        'conversionRate': round((total_converted / max(total_leads, 1)) * 100, 1),
+        'totalRevenue': total_revenue,
+        'avgTicket': round(total_revenue / max(total_converted, 1)),
+        'pendingLeads': pending_leads,
+        'bonusEarned': month_bonus,
     })

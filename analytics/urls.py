@@ -18,4 +18,5 @@ urlpatterns = [
     path('supervisor-performance/', views.supervisor_performance, name='supervisor-performance'),
     path('top-agents/', views.top_agents, name='top-agents'),
     path('performance-chart/', views.performance_chart, name='performance-chart'),
+    path('agent-stats/<int:agent_id>/', views.agent_stats, name='agent-stats'),
 ]

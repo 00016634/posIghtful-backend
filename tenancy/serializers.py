@@ -42,18 +42,33 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 class AgentSerializer(serializers.ModelSerializer):
     user_full_name = serializers.CharField(source='user.full_name', read_only=True, default='')
+    user_phone = serializers.CharField(source='user.phone_number', read_only=True, default='')
     region_name = serializers.CharField(source='region.name', read_only=True)
     city_name = serializers.CharField(source='city.name', read_only=True)
     parent_code = serializers.CharField(source='parent.agent_code', read_only=True, default=None)
+    parent_name = serializers.CharField(source='parent.user.full_name', read_only=True, default=None)
+    role = serializers.SerializerMethodField()
+    subordinates_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
         fields = [
-            'id', 'tenant', 'user', 'user_full_name', 'parent', 'parent_code',
+            'id', 'tenant', 'user', 'user_full_name', 'user_phone',
+            'parent', 'parent_code', 'parent_name',
             'agent_code', 'region', 'region_name', 'city', 'city_name',
-            'hired_at', 'terminated_at', 'status', 'created_at', 'updated_at',
+            'hired_at', 'terminated_at', 'status',
+            'role', 'subordinates_count',
+            'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
+
+    def get_role(self, obj):
+        if obj.subordinates.exists():
+            return 'Supervisor'
+        return 'Agent'
+
+    def get_subordinates_count(self, obj):
+        return obj.subordinates.count()
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):

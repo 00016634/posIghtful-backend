@@ -55,7 +55,7 @@ class LeadViewSet(TenantScopedViewSet):
 
     def get_queryset(self):
         return Lead.objects.select_related(
-            'tenant', 'agent', 'customer', 'primary_application'
+            'tenant', 'agent', 'agent__user', 'customer', 'primary_application'
         ).prefetch_related('applications__product', 'applications__current_stage').all()
 
     def perform_create(self, serializer):

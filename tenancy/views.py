@@ -96,8 +96,8 @@ class AgentViewSet(TenantScopedViewSet):
 
     def get_queryset(self):
         return Agent.objects.select_related(
-            'tenant', 'user', 'parent', 'region', 'city'
-        ).all()
+            'tenant', 'user', 'parent', 'parent__user', 'region', 'city'
+        ).prefetch_related('subordinates').all()
 
 
 @api_view(['GET'])

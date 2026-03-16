@@ -53,15 +53,41 @@ class LeadApplicationSerializer(serializers.ModelSerializer):
 
 class LeadSerializer(serializers.ModelSerializer):
     agent_code = serializers.CharField(source='agent.agent_code', read_only=True, default=None)
+    agent_name = serializers.CharField(source='agent.user.full_name', read_only=True, default='')
     applications = LeadApplicationSerializer(many=True, read_only=True)
+    status = serializers.SerializerMethodField()
+    sale_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
         fields = [
-            'id', 'tenant', 'agent', 'agent_code', 'customer',
+            'id', 'tenant', 'agent', 'agent_code', 'agent_name', 'customer',
             'interaction_type', 'customer_name', 'customer_phone',
             'latitude', 'longitude', 'primary_application',
             'server_received_at', 'created_at', 'updated_at',
-            'applications',
+            'applications', 'status', 'sale_amount',
         ]
         read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
+
+    def get_status(self, obj):
+        app = obj.applications.filter(is_primary=True).first()
+        if not app:
+            app = obj.applications.first()
+        if not app or not app.current_stage:
+            return 'new'
+        stage_name = app.current_stage.name.lower()
+        if 'won' in stage_name or 'completed' in stage_name:
+            return 'converted'
+        elif 'lost' in stage_name or 'cancelled' in stage_name:
+            return 'lost'
+        elif 'new' in stage_name or 'requested' in stage_name:
+            return 'new'
+        else:
+            return 'pending'
+
+    def get_sale_amount(self, obj):
+        from conversions.models import Sale
+        sale = Sale.objects.filter(lead=obj, status='completed').first()
+        if sale:
+            return float(sale.amount)
+        return None

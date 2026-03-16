@@ -55,14 +55,14 @@ UZ_LAST_NAMES = [
 ]
 
 PRODUCTS = [
-    {'code': 'POS-TERM', 'name': 'POS Terminal Standard', 'category': 'Hardware'},
-    {'code': 'POS-PRO', 'name': 'POS Terminal Pro', 'category': 'Hardware'},
-    {'code': 'POS-MINI', 'name': 'POS Mini Reader', 'category': 'Hardware'},
-    {'code': 'SOFT-BASE', 'name': 'POSightful Basic Software', 'category': 'Software'},
-    {'code': 'SOFT-PRO', 'name': 'POSightful Pro Software', 'category': 'Software'},
-    {'code': 'SOFT-ENT', 'name': 'POSightful Enterprise', 'category': 'Software'},
-    {'code': 'SVC-INST', 'name': 'Installation Service', 'category': 'Service'},
-    {'code': 'SVC-TRAIN', 'name': 'Training Package', 'category': 'Service'},
+    # Hardware — physical POS devices sold to merchants
+    {'code': 'POS-TERM', 'name': 'POS Terminal', 'category': 'Hardware'},
+    {'code': 'POS-MINI', 'name': 'Mini Card Reader', 'category': 'Hardware'},
+    # Subscription — monthly payment processing plans
+    {'code': 'PAY-STD', 'name': 'Payment Processing Standard', 'category': 'Subscription'},
+    {'code': 'PAY-PRO', 'name': 'Payment Processing Pro', 'category': 'Subscription'},
+    # Service — one-time services
+    {'code': 'SVC-INST', 'name': 'Installation & Setup', 'category': 'Service'},
 ]
 
 INTERACTION_TYPES = ['Phone', 'Email', 'In Person', 'Online Chat', 'Referral', 'Walk-in', 'Social Media']
@@ -131,8 +131,8 @@ class Command(BaseCommand):
             help='Number of customers per tenant (default: 80)',
         )
         parser.add_argument(
-            '--leads', type=int, default=120,
-            help='Number of leads per tenant (default: 120)',
+            '--leads', type=int, default=200,
+            help='Number of leads per tenant (default: 200)',
         )
         parser.add_argument(
             '--sales', type=int, default=60,
@@ -579,46 +579,52 @@ class Command(BaseCommand):
             # ── Lead Pipelines & Stages ────────────────────────
             self.stdout.write('  Creating pipelines & stages...')
             pipeline_definitions = {
+                # POS Terminal — full hardware sales cycle with demo
                 'POS-TERM': [
-                    ('New Lead', 1, False), ('Demo Scheduled', 2, False),
-                    ('Demo Done', 3, False), ('Proposal Sent', 4, False),
-                    ('Negotiation', 5, False), ('Closed Won', 6, True),
-                    ('Closed Lost', 7, True),
+                    ('New Lead', 1, False),
+                    ('Contacted', 2, False),
+                    ('Demo Scheduled', 3, False),
+                    ('Demo Done', 4, False),
+                    ('Proposal Sent', 5, False),
+                    ('Negotiation', 6, False),
+                    ('Closed Won', 7, True),
+                    ('Closed Lost', 8, True),
                 ],
-                'POS-PRO': [
-                    ('New Lead', 1, False), ('Qualification', 2, False),
-                    ('Needs Analysis', 3, False), ('Proposal', 4, False),
-                    ('Negotiation', 5, False), ('Final Review', 6, False),
-                    ('Closed Won', 7, True), ('Closed Lost', 8, True),
-                ],
-                'SOFT-BASE': [
-                    ('Lead', 1, False), ('Contact Made', 2, False),
-                    ('Trial Started', 3, False), ('Quote Sent', 4, False),
-                    ('Closed Won', 5, True), ('Closed Lost', 6, True),
-                ],
-                'SOFT-PRO': [
-                    ('Lead', 1, False), ('Contact Made', 2, False),
-                    ('Trial Started', 3, False), ('Quote Sent', 4, False),
-                    ('Closed Won', 5, True), ('Closed Lost', 6, True),
-                ],
-                'SOFT-ENT': [
-                    ('Initial Contact', 1, False), ('Discovery', 2, False),
-                    ('Custom Demo', 3, False), ('Proposal', 4, False),
-                    ('Contract Review', 5, False), ('Closed Won', 6, True),
-                    ('Closed Lost', 7, True),
-                ],
-                'SVC-INST': [
-                    ('Requested', 1, False), ('Scheduled', 2, False),
-                    ('Completed', 3, True), ('Cancelled', 4, True),
-                ],
-                'SVC-TRAIN': [
-                    ('Requested', 1, False), ('Scheduled', 2, False),
-                    ('Completed', 3, True), ('Cancelled', 4, True),
-                ],
+                # Mini Card Reader — shorter cycle, simpler product
                 'POS-MINI': [
-                    ('New Lead', 1, False), ('Demo', 2, False),
-                    ('Quote', 3, False), ('Closed Won', 4, True),
+                    ('New Lead', 1, False),
+                    ('Contacted', 2, False),
+                    ('Quote Sent', 3, False),
+                    ('Closed Won', 4, True),
                     ('Closed Lost', 5, True),
+                ],
+                # Payment Processing Standard — subscription with trial
+                'PAY-STD': [
+                    ('New Lead', 1, False),
+                    ('Contacted', 2, False),
+                    ('Trial Started', 3, False),
+                    ('Trial Review', 4, False),
+                    ('Closed Won', 5, True),
+                    ('Closed Lost', 6, True),
+                ],
+                # Payment Processing Pro — longer subscription cycle
+                'PAY-PRO': [
+                    ('New Lead', 1, False),
+                    ('Qualification', 2, False),
+                    ('Needs Analysis', 3, False),
+                    ('Trial Started', 4, False),
+                    ('Proposal', 5, False),
+                    ('Contract Review', 6, False),
+                    ('Closed Won', 7, True),
+                    ('Closed Lost', 8, True),
+                ],
+                # Installation & Setup — simple service fulfillment
+                'SVC-INST': [
+                    ('Requested', 1, False),
+                    ('Scheduled', 2, False),
+                    ('In Progress', 3, False),
+                    ('Completed', 4, True),
+                    ('Cancelled', 5, True),
                 ],
             }
 
@@ -827,7 +833,7 @@ class Command(BaseCommand):
                     'name': 'Premium Product Commission',
                     'rule_dimension': 'POTENTIAL_PRODUCT',
                     'operator': 'IN',
-                    'text_values': 'POS-PRO, SOFT-ENT',
+                    'text_values': 'POS-TERM, PAY-PRO',
                     'amount_type': 'percent_of_sale',
                     'amount_value': Decimal('12.0000'),
                     'cap_amount': Decimal('1500'),
