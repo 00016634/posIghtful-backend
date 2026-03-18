@@ -10,4 +10,5 @@ urlpatterns = [
     path('', include(router.urls)),
     path('monthly/', views.monthly_bonuses_view, name='monthly-bonuses'),
     path('monthly/<str:month>/', views.monthly_bonus_detail_view, name='monthly-bonus-detail'),
+    path('monthly/<str:month>/audit/', views.monthly_audit_view, name='monthly-audit'),
 ]

@@ -46,6 +46,18 @@ def _tenant_kpi_qs(request):
     return qs
 
 
+def _team_scoped_kpi_qs(request):
+    """Return KPI queryset scoped to supervisor's team agents if applicable."""
+    from tenancy.models import Agent
+    qs = _tenant_kpi_qs(request)
+    supervisor = Agent.objects.filter(user=request.user).first()
+    if supervisor:
+        team_ids = list(Agent.objects.filter(parent=supervisor).values_list('id', flat=True))
+        if team_ids:
+            qs = qs.filter(agent_id__in=team_ids)
+    return qs
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_summary(request):
@@ -441,11 +453,11 @@ def supervisor_performance(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def top_agents(request):
-    """Top N agents by revenue this month."""
+    """Top N agents by revenue this month (scoped to supervisor's team if applicable)."""
     now = timezone.now().date()
     month_start = now.replace(day=1)
 
-    qs = _tenant_kpi_qs(request).filter(
+    qs = _team_scoped_kpi_qs(request).filter(
         kpi_date__gte=month_start,
     ).values(
         'agent__agent_code', 'agent__user__full_name'
@@ -471,11 +483,11 @@ def top_agents(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def performance_chart(request):
-    """Weekly leads vs conversions for last 4 weeks."""
+    """Weekly leads vs conversions for last 4 weeks (scoped to supervisor's team if applicable)."""
     now = timezone.now().date()
     four_weeks_ago = now - timedelta(weeks=4)
 
-    qs = _tenant_kpi_qs(request).filter(
+    qs = _team_scoped_kpi_qs(request).filter(
         kpi_date__gte=four_weeks_ago,
     )
 

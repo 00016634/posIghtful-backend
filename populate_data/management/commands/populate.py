@@ -884,26 +884,49 @@ class Command(BaseCommand):
             _force_dates(CommissionPolicy, cp.pk,
                          created_at=bonus_created, updated_at=bonus_created)
 
-            # ── KPI Agent Daily ────────────────────────────────
-            self.stdout.write('  Creating KPI daily records...')
+            # ── KPI Agent Daily (derived from actual Leads & Sales) ─
+            self.stdout.write('  Creating KPI daily records from real data...')
             kpi_count = 0
-            today = now.date()
+
+            # Build daily lead counts per agent from DB (not Python objects,
+            # because _force_dates updates DB but not in-memory objects)
+            from collections import defaultdict
+            daily_leads = defaultdict(lambda: defaultdict(int))   # {agent_id: {date: count}}
+            for lead in Lead.objects.filter(tenant=tenant).values('agent_id', 'created_at'):
+                lead_date = lead['created_at'].date()
+                daily_leads[lead['agent_id']][lead_date] += 1
+
+            # Build daily sale counts & revenue per agent from actual Sale records
+            daily_sales = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'revenue': Decimal('0')}))
+            all_sales = Sale.objects.filter(tenant=tenant, status='completed')
+            for sale in all_sales:
+                sale_date = sale.sold_at.date() if sale.sold_at else sale.created_at.date()
+                daily_sales[sale.agent_id][sale_date]['count'] += 1
+                daily_sales[sale.agent_id][sale_date]['revenue'] += sale.amount
+
+            # Collect all dates that have activity
+            all_dates = set()
+            for agent_dates in daily_leads.values():
+                all_dates.update(agent_dates.keys())
+            for agent_dates in daily_sales.values():
+                all_dates.update(agent_dates.keys())
+
             for agent in all_field_agents:
-                for day_offset in range(kpi_days):
-                    kpi_date = today - datetime.timedelta(days=day_offset)
-                    # Skip some weekends
-                    if kpi_date.weekday() >= 5 and random.random() < 0.4:
+                for kpi_date in sorted(all_dates):
+                    leads_captured = daily_leads[agent.id].get(kpi_date, 0)
+                    sale_info = daily_sales[agent.id].get(kpi_date, {'count': 0, 'revenue': Decimal('0')})
+                    leads_converted = sale_info['count']
+                    revenue = sale_info['revenue']
+
+                    # Skip days with zero activity for this agent
+                    if leads_captured == 0 and leads_converted == 0:
                         continue
 
-                    leads_captured = random.randint(1, 15)
-                    leads_converted = random.randint(0, min(leads_captured, 6))
                     conv_rate = Decimal(str(round(
                         leads_converted / max(leads_captured, 1) * 100, 2)))
-                    revenue = Decimal(str(leads_converted * random.randint(500, 4000)))
-                    bonus = Decimal(str(round(float(revenue) * random.uniform(0.05, 0.18), 2)))
+                    bonus = Decimal(str(round(float(revenue) * random.uniform(0.08, 0.15), 2)))
                     net_profit = revenue - bonus
 
-                    # KPI record "created" at end of that day (e.g. nightly job)
                     kpi_created_at = timezone.make_aware(
                         datetime.datetime.combine(
                             kpi_date, datetime.time(23, random.randint(0, 59), random.randint(0, 59))
@@ -926,7 +949,7 @@ class Command(BaseCommand):
                     KPIAgentDaily.objects.filter(pk=kpi.pk).update(
                         created_at=kpi_created_at)
                     kpi_count += 1
-            self.stdout.write(self.style.SUCCESS(f'    {kpi_count} KPI daily records'))
+            self.stdout.write(self.style.SUCCESS(f'    {kpi_count} KPI daily records (from real leads & sales)'))
 
             credentials_report.append(tenant_report)
 
