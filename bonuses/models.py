@@ -80,3 +80,20 @@ class BonusRule(models.Model):
 
     def __str__(self):
         return f"{self.name or f'Rule #{self.id}'} ({self.rule_dimension})"
+
+
+class BonusLedger(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    tenant = models.ForeignKey('tenancy.Tenant', on_delete=models.CASCADE, related_name='bonus_ledger_entries')
+    sale = models.OneToOneField('conversions.Sale', on_delete=models.CASCADE, related_name='bonus_ledger')
+    agent = models.ForeignKey('tenancy.Agent', on_delete=models.CASCADE, related_name='bonus_ledger_entries')
+    rule = models.ForeignKey(BonusRule, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    bonus_amount = models.DecimalField(max_digits=18, decimal_places=2)
+    calculation_detail = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'bonus_ledger'
+
+    def __str__(self):
+        return f"Bonus {self.bonus_amount} for Sale #{self.sale_id}"

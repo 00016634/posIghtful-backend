@@ -5,8 +5,8 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum, Count, Avg
 from django.db.models.functions import TruncMonth
-from .models import CommissionPolicy, BonusRule
-from .serializers import CommissionPolicySerializer, BonusRuleSerializer
+from .models import CommissionPolicy, BonusRule, BonusLedger
+from .serializers import CommissionPolicySerializer, BonusRuleSerializer, BonusLedgerSerializer
 
 
 class TenantScopedViewSet(viewsets.ModelViewSet):
@@ -45,6 +45,32 @@ class BonusRuleViewSet(TenantScopedViewSet):
 
     def get_queryset(self):
         return BonusRule.objects.select_related('tenant').all()
+
+
+class BonusLedgerViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = BonusLedgerSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['agent', 'rule']
+    ordering_fields = ['created_at', 'bonus_amount']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        qs = BonusLedger.objects.select_related(
+            'agent__user', 'rule', 'sale', 'tenant',
+        ).all()
+        user = self.request.user
+        if user.tenant_id:
+            qs = qs.filter(tenant=user.tenant)
+
+        # Optional date range filtering
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        return qs
 
 
 @api_view(['GET'])
@@ -152,63 +178,95 @@ def monthly_audit_view(request, month):
     if request.user.tenant_id:
         sales = sales.filter(tenant=request.user.tenant)
 
-    # Load active bonus rules for this tenant
-    rules = list(BonusRule.objects.filter(
-        is_active=True,
-        effective_from__lte=end_date,
-    ))
-    if request.user.tenant_id:
-        rules = [r for r in rules if r.tenant_id == request.user.tenant_id]
+    # Build a map of sale_id -> BonusLedger for pre-recorded bonuses
+    ledger_map = {}
+    ledger_entries = BonusLedger.objects.filter(
+        sale__in=sales
+    ).select_related('rule')
+    for entry in ledger_entries:
+        ledger_map[entry.sale_id] = entry
+
+    # Fallback: load active bonus rules for sales without ledger entries
+    rules = None
 
     result = []
     for sale in sales:
         amount = float(sale.amount)
-        applied_rule = None
-        bonus = 0.0
-        for rule in rules:
-            matches = False
-            if rule.rule_dimension == 'SELL_AMOUNT':
-                threshold = float(rule.num_from or 0)
-                if rule.operator == 'GTE' and amount >= threshold:
-                    matches = True
-                elif rule.operator == 'GT' and amount > threshold:
-                    matches = True
-            elif rule.rule_dimension == 'POTENTIAL_PRODUCT' and sale.product:
-                product_codes = [c.strip() for c in (rule.text_values or '').split(',')]
-                if sale.product.code in product_codes:
-                    matches = True
+        ledger = ledger_map.get(sale.id)
 
-            if matches:
-                if rule.amount_type == 'percent_of_sale':
-                    bonus = amount * float(rule.amount_value) / 100
-                    cap = float(rule.cap_amount or 0)
-                    if cap > 0:
-                        bonus = min(bonus, cap)
-                else:
-                    bonus = float(rule.amount_value)
-                applied_rule = rule
-                break
+        if ledger:
+            # Use pre-recorded bonus from BonusLedger
+            result.append({
+                'id': sale.id,
+                'agentName': sale.agent.user.full_name if sale.agent and sale.agent.user else 'Unknown',
+                'agentCode': sale.agent.agent_code if sale.agent else '',
+                'leadId': f'LEAD-{sale.lead_id}' if sale.lead_id else '-',
+                'customerName': sale.customer.full_name if sale.customer else '-',
+                'productName': sale.product.name if sale.product else '-',
+                'saleAmount': amount,
+                'saleDate': sale.sold_at.strftime('%Y-%m-%d'),
+                'ruleName': ledger.rule.name if ledger.rule else 'Default (10%)',
+                'ruleType': (f'{ledger.rule.get_amount_type_display()} – {ledger.rule.get_rule_dimension_display()}'
+                             if ledger.rule else 'Percent of sale'),
+                'bonusAmount': float(ledger.bonus_amount),
+                'calculation': ledger.calculation_detail,
+            })
+        else:
+            # Fallback: calculate on the fly for historical sales without ledger
+            if rules is None:
+                rules = list(BonusRule.objects.filter(
+                    is_active=True,
+                    effective_from__lte=end_date,
+                ))
+                if request.user.tenant_id:
+                    rules = [r for r in rules if r.tenant_id == request.user.tenant_id]
 
-        if not applied_rule:
-            bonus = round(amount * 0.10, 2)
+            applied_rule = None
+            bonus = 0.0
+            for rule in rules:
+                matches = False
+                if rule.rule_dimension == 'SELL_AMOUNT':
+                    threshold = float(rule.num_from or 0)
+                    if rule.operator == 'GTE' and amount >= threshold:
+                        matches = True
+                    elif rule.operator == 'GT' and amount > threshold:
+                        matches = True
+                elif rule.rule_dimension == 'POTENTIAL_PRODUCT' and sale.product:
+                    product_codes = [c.strip() for c in (rule.text_values or '').split(',')]
+                    if sale.product.code in product_codes:
+                        matches = True
 
-        result.append({
-            'id': sale.id,
-            'agentName': sale.agent.user.full_name if sale.agent and sale.agent.user else 'Unknown',
-            'agentCode': sale.agent.agent_code if sale.agent else '',
-            'leadId': f'LEAD-{sale.lead_id}' if sale.lead_id else '-',
-            'customerName': sale.customer.full_name if sale.customer else '-',
-            'productName': sale.product.name if sale.product else '-',
-            'saleAmount': amount,
-            'saleDate': sale.sold_at.strftime('%Y-%m-%d'),
-            'ruleName': applied_rule.name if applied_rule else 'Default (10%)',
-            'ruleType': (f'{applied_rule.get_amount_type_display()} – {applied_rule.get_rule_dimension_display()}'
-                         if applied_rule else 'Percent of sale'),
-            'bonusAmount': round(bonus, 2),
-            'calculation': (f'{float(applied_rule.amount_value)}% of ${amount:,.0f}'
-                           if applied_rule and applied_rule.amount_type == 'percent_of_sale'
-                           else f'${float(applied_rule.amount_value):,.0f} fixed'
-                           if applied_rule else f'10% of ${amount:,.0f}'),
-        })
+                if matches:
+                    if rule.amount_type == 'percent_of_sale':
+                        bonus = amount * float(rule.amount_value) / 100
+                        cap = float(rule.cap_amount or 0)
+                        if cap > 0:
+                            bonus = min(bonus, cap)
+                    else:
+                        bonus = float(rule.amount_value)
+                    applied_rule = rule
+                    break
+
+            if not applied_rule:
+                bonus = round(amount * 0.10, 2)
+
+            result.append({
+                'id': sale.id,
+                'agentName': sale.agent.user.full_name if sale.agent and sale.agent.user else 'Unknown',
+                'agentCode': sale.agent.agent_code if sale.agent else '',
+                'leadId': f'LEAD-{sale.lead_id}' if sale.lead_id else '-',
+                'customerName': sale.customer.full_name if sale.customer else '-',
+                'productName': sale.product.name if sale.product else '-',
+                'saleAmount': amount,
+                'saleDate': sale.sold_at.strftime('%Y-%m-%d'),
+                'ruleName': applied_rule.name if applied_rule else 'Default (10%)',
+                'ruleType': (f'{applied_rule.get_amount_type_display()} – {applied_rule.get_rule_dimension_display()}'
+                             if applied_rule else 'Percent of sale'),
+                'bonusAmount': round(bonus, 2),
+                'calculation': (f'{float(applied_rule.amount_value)}% of ${amount:,.0f}'
+                               if applied_rule and applied_rule.amount_type == 'percent_of_sale'
+                               else f'${float(applied_rule.amount_value):,.0f} fixed'
+                               if applied_rule else f'10% of ${amount:,.0f}'),
+            })
 
     return Response(result)

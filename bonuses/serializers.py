@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CommissionPolicy, BonusRule
+from .models import CommissionPolicy, BonusRule, BonusLedger
 
 
 class CommissionPolicySerializer(serializers.ModelSerializer):
@@ -26,3 +26,21 @@ class BonusRuleSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'tenant', 'created_at', 'updated_at']
+
+
+class BonusLedgerSerializer(serializers.ModelSerializer):
+    agent_name = serializers.CharField(source='agent.user.full_name', read_only=True, default='')
+    agent_code = serializers.CharField(source='agent.agent_code', read_only=True, default='')
+    rule_name = serializers.CharField(source='rule.name', read_only=True, default=None)
+    sale_amount = serializers.DecimalField(source='sale.amount', max_digits=18, decimal_places=2, read_only=True)
+    sale_date = serializers.DateTimeField(source='sale.sold_at', read_only=True)
+
+    class Meta:
+        model = BonusLedger
+        fields = [
+            'id', 'tenant', 'sale', 'agent', 'rule',
+            'agent_name', 'agent_code', 'rule_name',
+            'sale_amount', 'sale_date',
+            'bonus_amount', 'calculation_detail', 'created_at',
+        ]
+        read_only_fields = fields

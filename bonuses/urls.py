@@ -5,6 +5,7 @@ from . import views
 router = DefaultRouter()
 router.register(r'policies', views.CommissionPolicyViewSet, basename='commission-policy')
 router.register(r'rules', views.BonusRuleViewSet, basename='bonus-rule')
+router.register(r'ledger', views.BonusLedgerViewSet, basename='bonus-ledger')
 
 urlpatterns = [
     path('', include(router.urls)),
