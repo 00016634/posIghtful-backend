@@ -262,7 +262,8 @@ def manager_dashboard(request):
 
     prev_revenue = float(prev_kpi['total_revenue'] or 0)
     if prev_revenue > 0:
-        rev_trend = f'+{int(((total_revenue - prev_revenue) / prev_revenue) * 100)}% from last quarter'
+        rev_pct = int(((total_revenue - prev_revenue) / prev_revenue) * 100)
+        rev_trend = f'{rev_pct:+d}% from last quarter'
     else:
         rev_trend = 'No prior data'
 
