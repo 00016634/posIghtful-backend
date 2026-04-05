@@ -161,6 +161,7 @@ class Command(BaseCommand):
         from conversions.models import Sale
         from bonuses.models import BonusRule, CommissionPolicy
         from analytics.models import KPIAgentDaily
+        from conversation_analysis.models import LeadConversation
 
         num_tenants = options['tenants']
         num_supervisors = options['supervisors']
@@ -174,7 +175,12 @@ class Command(BaseCommand):
         if options['flush']:
             self.stdout.write(self.style.WARNING('Flushing all existing data...'))
             KPIAgentDaily.objects.all().delete()
+            LeadConversation.objects.all().delete()
             Sale.objects.all().delete()
+            # Clear telegram tables (raw SQL — may not have Django models)
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute('TRUNCATE telegram_notification_logs, telegram_profiles CASCADE')
             LeadStageHistory.objects.all().delete()
             LeadApplication.objects.all().delete()
             Lead.objects.all().delete()
@@ -759,6 +765,330 @@ class Command(BaseCommand):
                                 app.save(update_fields=['last_stage_history'])
 
             self.stdout.write(self.style.SUCCESS(f'    {len(lead_objs)} leads with applications'))
+
+            # ── Conversation Logs ─────────────────────────────
+            self.stdout.write('  Creating conversation logs...')
+
+            # Map lead interaction_type to conversation channel
+            INTERACTION_TO_CHANNEL = {
+                'Phone': 'phone',
+                'In Person': 'in_person',
+                'Email': 'email',
+                'Online Chat': 'online_chat',
+            }
+
+            # Sample chat transcripts (agent selling POS products in Uzbekistan)
+            CHAT_TRANSCRIPTS = [
+                # ── Positive / successful conversations ──
+                (
+                    "Agent: Assalomu aleykum! Sizga qanday yordam bera olaman?\n"
+                    "Customer: Salom, men do'konim uchun POS terminal kerak edi.\n"
+                    "Agent: Albatta! Bizning POS Terminal X200 modeli juda qulay — Uzcard, Humo, Visa va Mastercard qabul qiladi.\n"
+                    "Customer: Narxi qancha bo'ladi?\n"
+                    "Agent: Oyiga 500,000 so'm. Birinchi oy bepul sinov muddati bor.\n"
+                    "Customer: Yaxshi, sinab ko'rmoqchiman. Qachon o'rnatib berasiz?\n"
+                    "Agent: Ertaga ertalab 10:00 da kelishimiz mumkin. Manzilingizni yozib olsam.\n"
+                    "Customer: Chilonzor tumani, 5-kvartal, 12-uy. Rahmat!\n"
+                    "Agent: Rahmat, ertaga ko'rishguncha!"
+                ),
+                (
+                    "Agent: Hello! Welcome to POSightful. How can I help you today?\n"
+                    "Customer: Hi, I need a card payment solution for my restaurant.\n"
+                    "Agent: Great choice! Our SmartPOS Mini is perfect for restaurants — it's compact, supports NFC, QR, and all major cards.\n"
+                    "Customer: Does it work with Uzcard? Most of my customers use it.\n"
+                    "Agent: Absolutely! Uzcard and Humo are fully supported. We also have 24/7 technical support.\n"
+                    "Customer: What about the monthly fee?\n"
+                    "Agent: 350,000 sum per month. We have a promotion right now — sign up today and get 2 months free.\n"
+                    "Customer: That sounds great! Let's do it. Can someone come tomorrow?\n"
+                    "Agent: Of course! I'll schedule installation for tomorrow morning. Thank you for choosing us!"
+                ),
+                (
+                    "Agent: Salom! POSightful kompaniyasidan. Sizga qanday yordam bera olaman?\n"
+                    "Customer: Menga Payment Processing Pro xizmati haqida ma'lumot kerak.\n"
+                    "Agent: Pro paket — kunlik tranzaksiya limiti cheksiz, real-time analytics, va dedicated account manager beramiz.\n"
+                    "Customer: Biz oyiga 500 dan ortiq tranzaksiya qilamiz. Bu paket yetarli bo'ladimi?\n"
+                    "Agent: Albatta! Pro paket katta hajmli bizneslar uchun maxsus yaratilgan. Bundan tashqari, 3 oylik bepul trial davri bor.\n"
+                    "Customer: Zo'r! Shartnomani qachon imzolashimiz mumkin?\n"
+                    "Agent: Bugun shartnomani elektron pochtangizga yuborishim mumkin. Imzolab qaytarsangiz, ertaga faollashtirmiz.\n"
+                    "Customer: Juda yaxshi, kutaman!"
+                ),
+                (
+                    "Agent: Good afternoon! I'm calling from POSightful about our POS solutions.\n"
+                    "Customer: Yes, I was looking at your website. We run a chain of pharmacies.\n"
+                    "Agent: Wonderful! For pharmacy chains, I'd recommend our POS Terminal with inventory tracking integration.\n"
+                    "Customer: Can it connect to our existing accounting software?\n"
+                    "Agent: Yes, we have API integration with most popular accounting platforms including 1C and SAP.\n"
+                    "Customer: How many terminals would we need for 5 locations?\n"
+                    "Agent: For 5 locations, I'd suggest our Enterprise plan — 5 terminals with centralized management dashboard.\n"
+                    "Customer: Send me a formal proposal please.\n"
+                    "Agent: I'll email you the proposal today. You'll have it within the hour. Thank you!"
+                ),
+                (
+                    "Agent: Assalomu aleykum! POS terminal o'rnatish xizmati haqida qo'ng'iroq qilayotgan edingiz.\n"
+                    "Customer: Ha, bizda yangi kafe ochilyapti va 3 ta terminal kerak.\n"
+                    "Agent: 3 ta terminal uchun maxsus chegirma bor — har biri 400,000 so'm bo'ladi (odatda 500,000).\n"
+                    "Customer: Kafolat bormi?\n"
+                    "Agent: 2 yillik kafolat va 24/7 texnik yordam. Agar biror muammo bo'lsa, 2 soat ichida texnik mutaxassis keladi.\n"
+                    "Customer: Juda yaxshi! Kafemiz 15-aprelda ochiladi. Shundan oldin o'rnatib bera olasizmi?\n"
+                    "Agent: Albatta, 12-apelda o'rnatishni rejalashtirsakchi. Sizga mosmi?\n"
+                    "Customer: Ha, juda mos. Shartnomani tayyorlang."
+                ),
+                # ── Neutral / considering conversations ──
+                (
+                    "Agent: Hello! Thanks for reaching out to POSightful.\n"
+                    "Customer: Hi, I want to compare your POS terminal with what we're currently using.\n"
+                    "Agent: Sure! What system are you using now?\n"
+                    "Customer: We have an older model from another company. It's slow and doesn't support QR payments.\n"
+                    "Agent: Our X200 supports QR, NFC, and chip payments. Processing speed is under 3 seconds per transaction.\n"
+                    "Customer: That's better. But switching costs concern me.\n"
+                    "Agent: We offer free migration and setup. Your staff can be trained in just 30 minutes.\n"
+                    "Customer: Let me think about it. I'll discuss with my business partner first.\n"
+                    "Agent: Of course! Take your time. I'll send you our comparison brochure by email."
+                ),
+                (
+                    "Agent: Salom! POSightful xizmatlarimiz haqida so'ragan edingiz.\n"
+                    "Customer: Ha, men kichik do'konim uchun Mini Card Reader haqida bilmoqchi edim.\n"
+                    "Agent: Mini Card Reader — eng arzon va sodda yechimimiz. Telefoningizga ulanadi va darhol ishlaydi.\n"
+                    "Customer: Faqat Uzcard ishlaydimi?\n"
+                    "Agent: Uzcard, Humo, Visa va Mastercard — hammasi ishlaydi.\n"
+                    "Customer: Narxi?\n"
+                    "Agent: Qurilma 200,000 so'm, oylik to'lov 150,000 so'm.\n"
+                    "Customer: Boshqa kompaniyalarnikini ham ko'rib chiqayotganman. Sizniki qimmatroq.\n"
+                    "Agent: Tushunaman. Lekin bizda tranzaksiya komissiyasi eng past — atigi 0.5%. Bu uzoq muddatda tejashga yordam beradi.\n"
+                    "Customer: Qiziq. O'ylab ko'raman, rahmat."
+                ),
+                (
+                    "Agent: Good morning! Following up on your inquiry about our payment processing service.\n"
+                    "Customer: Yes, we're a small online store. We need something for our website.\n"
+                    "Agent: Our Payment Processing Standard plan includes online payment gateway, supports all major cards.\n"
+                    "Customer: What's the integration like? We use WordPress with WooCommerce.\n"
+                    "Agent: We have a ready-made WooCommerce plugin. Installation takes about 15 minutes.\n"
+                    "Customer: And the fees?\n"
+                    "Agent: 1.5% per transaction, no monthly minimum. You only pay when you get sales.\n"
+                    "Customer: That's reasonable. Can I try it first?\n"
+                    "Agent: Yes! We have a 14-day free trial with full features. Want me to set it up?\n"
+                    "Customer: Let me check with my developer first. I'll get back to you this week."
+                ),
+                # ── Negative / lost conversations ──
+                (
+                    "Agent: Assalomu aleykum! POS terminal taklifimiz haqida gaplashmoqchi edim.\n"
+                    "Customer: Salom, lekin hozir band esman.\n"
+                    "Agent: Tushunaman. Qachon qulay vaqtda qo'ng'iroq qilsam bo'ladi?\n"
+                    "Customer: Bilmadim, hozircha POS terminal kerak emas. Naqd pul bilan ishlaymiz.\n"
+                    "Agent: Tushunaman, lekin hozirda ko'p mijozlar karta bilan to'lashni afzal ko'rishyapti...\n"
+                    "Customer: Balki keyinroq. Hozir qiziqmayapman.\n"
+                    "Agent: Albatta. Agar fikringiz o'zgarsa, bizga qo'ng'iroq qiling. Yaxshi kun!"
+                ),
+                (
+                    "Agent: Hi! I'm reaching out about our POS solutions for your business.\n"
+                    "Customer: We already have a POS system and we're happy with it.\n"
+                    "Agent: I understand. May I ask which system you're using?\n"
+                    "Customer: We use CompetitorX. It works fine for us.\n"
+                    "Agent: That's a decent system. However, our solution offers lower transaction fees and better Uzcard integration.\n"
+                    "Customer: We just signed a 2-year contract with them last month. Not interested right now.\n"
+                    "Agent: I understand completely. When your contract is up, please keep us in mind. Have a great day!"
+                ),
+                (
+                    "Agent: Salom! Sizning so'rovingiz bo'yicha qo'ng'iroq qilyapman.\n"
+                    "Customer: Ha, Installation xizmati haqida so'ragan edim. Lekin narxni eshitib fikrim o'zgardi.\n"
+                    "Agent: Narximiz 800,000 so'm — o'rnatish, sozlash va xodimlarni o'qitish barchasi kiradi.\n"
+                    "Customer: Boshqa kompaniya 500,000 so'mga taklif qilyapti.\n"
+                    "Agent: Bizda 2 yillik kafolat va 24/7 yordam kiradi. Boshqa kompaniyalarda bu qo'shimcha to'lov.\n"
+                    "Customer: Baribir arzonrog'ini tanlayman. Rahmat.\n"
+                    "Agent: Tushunaman. Agar sifat bo'yicha muammo chiqsa, bizga murojaat qiling. Yaxshi kun!"
+                ),
+                (
+                    "Agent: Hello! Thank you for your interest in POSightful.\n"
+                    "Customer: Hi. Your website says you support international cards. Is that true?\n"
+                    "Agent: Yes! We support Visa, Mastercard, UnionPay, and JCB in addition to local cards.\n"
+                    "Customer: Good. But I checked your reviews and some customers complain about slow support response.\n"
+                    "Agent: We've recently expanded our support team. Average response time is now under 30 minutes.\n"
+                    "Customer: Hmm. I need to think more about it. The reviews concern me.\n"
+                    "Agent: I understand your concern. Would you like to speak with some of our current clients as references?\n"
+                    "Customer: Maybe later. I'll let you know.\n"
+                    "Agent: No problem at all. Feel free to reach out anytime!"
+                ),
+            ]
+
+            # Sample email transcripts
+            EMAIL_TRANSCRIPTS = [
+                (
+                    "From: customer@example.com\nTo: sales@posightful.uz\nSubject: POS Terminal Inquiry\n\n"
+                    "Hello,\n\nI am interested in your POS Terminal for my retail shop in Tashkent. "
+                    "We process about 200 transactions daily and need a reliable solution.\n\n"
+                    "Could you please send me pricing details and available models?\n\n"
+                    "Best regards,\n{customer_name}\n\n"
+                    "---\nFrom: {agent_name} <sales@posightful.uz>\nTo: customer@example.com\n"
+                    "Subject: Re: POS Terminal Inquiry\n\n"
+                    "Assalomu aleykum {customer_name}!\n\n"
+                    "Thank you for your interest. For 200 daily transactions, I recommend our POS Terminal X200:\n"
+                    "- Price: 500,000 UZS/month\n"
+                    "- Supports: Uzcard, Humo, Visa, Mastercard, QR\n"
+                    "- Free first month trial\n"
+                    "- 24/7 technical support\n\n"
+                    "Would you like to schedule a demo at your shop?\n\n"
+                    "Best regards,\n{agent_name}\nPOSightful Sales Team"
+                ),
+                (
+                    "From: customer@business.uz\nTo: info@posightful.uz\nSubject: Payment Processing for Online Store\n\n"
+                    "Hi,\n\nWe run an e-commerce platform and need payment processing integration. "
+                    "We currently accept only bank transfers and want to add card payments.\n\n"
+                    "What solutions do you offer for online businesses?\n\n"
+                    "Thanks,\n{customer_name}\n\n"
+                    "---\nFrom: {agent_name} <info@posightful.uz>\nTo: customer@business.uz\n"
+                    "Subject: Re: Payment Processing for Online Store\n\n"
+                    "Hello {customer_name}!\n\n"
+                    "For e-commerce, our Payment Processing Standard plan would be perfect:\n"
+                    "- Easy API/plugin integration (WooCommerce, Shopify, custom)\n"
+                    "- 1.5% per transaction, no monthly minimum\n"
+                    "- All major cards + Uzcard/Humo\n"
+                    "- 14-day free trial\n\n"
+                    "If you process over 1000 transactions/month, our Pro plan offers even better rates.\n\n"
+                    "Shall I set up a trial account for you?\n\n"
+                    "Regards,\n{agent_name}"
+                ),
+                (
+                    "From: director@cafe.uz\nTo: sales@posightful.uz\nSubject: Multiple Terminal Setup\n\n"
+                    "Salom,\n\nBizda 3 ta filialda kafe bor va har biriga POS terminal kerak. "
+                    "Ommaviy buyurtma uchun chegirma bormi?\n\n"
+                    "Hurmat bilan,\n{customer_name}\n\n"
+                    "---\nFrom: {agent_name} <sales@posightful.uz>\nTo: director@cafe.uz\n"
+                    "Subject: Re: Multiple Terminal Setup\n\n"
+                    "Assalomu aleykum {customer_name}!\n\n"
+                    "3 ta filial uchun maxsus Enterprise paketi taklif qilamiz:\n"
+                    "- Har bir terminal: 400,000 so'm/oy (20% chegirma)\n"
+                    "- Markazlashtirilgan boshqaruv paneli\n"
+                    "- Barcha filiallardagi sotuvlarni real vaqtda ko'rish\n"
+                    "- Bepul o'rnatish va xodimlarni o'qitish\n\n"
+                    "Sizga qulay vaqtda uchrashib batafsil gaplashishimiz mumkin.\n\n"
+                    "Hurmat bilan,\n{agent_name}"
+                ),
+                (
+                    "From: shop@gmail.com\nTo: support@posightful.uz\nSubject: Mini Card Reader Question\n\n"
+                    "Hi,\n\nI have a small flower shop. I don't need a full POS terminal, just something "
+                    "simple to accept card payments. Do you have a portable solution?\n\n"
+                    "{customer_name}\n\n"
+                    "---\nFrom: {agent_name} <support@posightful.uz>\nTo: shop@gmail.com\n"
+                    "Subject: Re: Mini Card Reader Question\n\n"
+                    "Hello {customer_name}!\n\n"
+                    "Our Mini Card Reader is exactly what you need:\n"
+                    "- Connects to your phone via Bluetooth\n"
+                    "- Accepts all cards including Uzcard\n"
+                    "- Device cost: 200,000 UZS (one-time)\n"
+                    "- Monthly fee: 150,000 UZS\n"
+                    "- Transaction fee: only 0.5%\n\n"
+                    "It fits in your pocket and is ready to use in 5 minutes!\n\n"
+                    "Want me to deliver one to your shop?\n\n"
+                    "Best,\n{agent_name}"
+                ),
+                (
+                    "From: manager@hotel.uz\nTo: enterprise@posightful.uz\nSubject: Installation Service Request\n\n"
+                    "Dear POSightful team,\n\nWe recently purchased 10 POS terminals for our hotel. "
+                    "We need professional installation and staff training. "
+                    "The hotel is in Samarkand.\n\n"
+                    "When can your team visit?\n\n"
+                    "Regards,\n{customer_name}\n\n"
+                    "---\nFrom: {agent_name} <enterprise@posightful.uz>\nTo: manager@hotel.uz\n"
+                    "Subject: Re: Installation Service Request\n\n"
+                    "Dear {customer_name},\n\n"
+                    "Thank you for choosing POSightful! For 10 terminals, our installation package includes:\n"
+                    "- On-site setup by our certified technicians\n"
+                    "- Network configuration and testing\n"
+                    "- Staff training (up to 20 employees)\n"
+                    "- Total: 3,000,000 UZS (300,000 per terminal)\n\n"
+                    "Our Samarkand team can visit next Tuesday or Thursday. Which works best?\n\n"
+                    "Best regards,\n{agent_name}\nEnterprise Solutions"
+                ),
+            ]
+
+            # Sentiment weights for different transcript indices
+            # First 5 = positive, next 3 = neutral, last 4 = negative
+            CHAT_SENTIMENTS = (
+                ['very_positive'] * 2 + ['positive'] * 3 +
+                ['neutral'] * 3 +
+                ['negative'] * 3 + ['very_negative'] * 1
+            )
+            CHAT_RATINGS = [5, 5, 4, 4, 5, 3, 3, 3, 2, 2, 2, 1]
+
+            conv_count = 0
+            for lead in lead_objs:
+                # Only create conversations for relevant interaction types
+                channel = INTERACTION_TO_CHANNEL.get(lead.interaction_type)
+                if not channel:
+                    continue  # Skip Referral, Walk-in, Social Media
+
+                # Only text-based channels (email, online_chat) — no audio
+                if channel in ('phone', 'in_person'):
+                    continue
+
+                # ~60% of eligible leads get a conversation log
+                if random.random() > 0.6:
+                    continue
+
+                if channel == 'email':
+                    template = random.choice(EMAIL_TRANSCRIPTS)
+                    agent_name = lead.agent.user.full_name if lead.agent else 'Sales Agent'
+                    transcript = template.format(
+                        customer_name=lead.customer_name,
+                        agent_name=agent_name,
+                    )
+                    # Email conversations are generally neutral-positive
+                    sentiment = random.choice(['positive', 'neutral', 'very_positive'])
+                    rating = random.choice([3, 4, 4, 5])
+                else:
+                    idx = random.randint(0, len(CHAT_TRANSCRIPTS) - 1)
+                    transcript = CHAT_TRANSCRIPTS[idx]
+                    sentiment = CHAT_SENTIMENTS[idx]
+                    rating = CHAT_RATINGS[idx]
+
+                topic_options = [
+                    'POS terminal inquiry', 'Card reader pricing',
+                    'Payment processing setup', 'Installation service',
+                    'Product demo request', 'Enterprise solution',
+                    'Terminal comparison', 'Online payment integration',
+                    'Multi-location setup', 'Subscription pricing',
+                ]
+                outcome_options = {
+                    'very_positive': 'Customer signed up and scheduled installation.',
+                    'positive': 'Customer showed strong interest and requested follow-up.',
+                    'neutral': 'Customer is considering options and will decide later.',
+                    'negative': 'Customer chose a competitor or is not interested at this time.',
+                    'very_negative': 'Customer was not interested and declined the offer.',
+                }
+
+                conv_created = lead.created_at + datetime.timedelta(
+                    minutes=random.randint(5, 120))
+                analyzed_at = conv_created + datetime.timedelta(
+                    seconds=random.randint(10, 60))
+
+                conv = LeadConversation.objects.create(
+                    tenant=tenant,
+                    lead=lead,
+                    agent=lead.agent,
+                    channel=channel,
+                    raw_transcript=transcript,
+                    transcription_status='skipped',
+                    analysis_status='completed',
+                    rating=rating,
+                    conversation_topic=random.choice(topic_options),
+                    short_description=fake.sentence(nb_words=12),
+                    conversation_outcome=outcome_options[sentiment],
+                    customer_sentiment=sentiment,
+                    ai_raw_response={
+                        'rating': rating,
+                        'conversation_topic': random.choice(topic_options),
+                        'short_description': fake.sentence(nb_words=12),
+                        'conversation_outcome': outcome_options[sentiment],
+                        'customer_sentiment': sentiment,
+                    },
+                    analyzed_at=analyzed_at,
+                )
+                _force_dates(LeadConversation, conv.pk,
+                             created_at=conv_created, updated_at=analyzed_at)
+                conv_count += 1
+
+            self.stdout.write(self.style.SUCCESS(
+                f'    {conv_count} conversation logs (email + online_chat)'))
 
             # ── Sales ──────────────────────────────────────────
             self.stdout.write('  Creating sales...')

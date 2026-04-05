@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'bonuses',
     'analytics',
     'populate_data',
+    'conversation_analysis',
 ]
 
 MIDDLEWARE = [
@@ -142,6 +143,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Media files (user uploads)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -199,3 +204,6 @@ SWAGGER_SETTINGS = {
     'JSON_EDITOR': True,
     'SUPPORTED_SUBMIT_METHODS': ['get', 'post', 'put', 'delete', 'patch'],
 }
+
+# OpenAI API Key (for conversation analysis)
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
