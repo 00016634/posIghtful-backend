@@ -54,9 +54,45 @@ class LeadViewSet(TenantScopedViewSet):
     ordering_fields = ['created_at', 'server_received_at']
 
     def get_queryset(self):
-        return Lead.objects.select_related(
+        qs = Lead.objects.select_related(
             'tenant', 'agent', 'agent__user', 'customer', 'primary_application'
         ).prefetch_related('applications__product', 'applications__current_stage').all()
+
+        user = self.request.user
+        if not user.tenant_id:
+            return qs
+
+        qs = qs.filter(tenant=user.tenant)
+
+        from users.models import UserRole
+        user_roles = set(
+            UserRole.objects.filter(user=user, tenant=user.tenant)
+            .values_list('role__code', flat=True)
+        )
+
+        # Managers, admins, finance see all leads in tenant
+        if user_roles & {'MANAGER', 'ADMIN', 'FINANCE'}:
+            return qs
+
+        # Supervisors see their team's leads + own
+        if 'SUPERVISOR' in user_roles:
+            from tenancy.models import Agent
+            supervised_agents = Agent.objects.filter(
+                parent__user=user, tenant=user.tenant,
+            ).values_list('id', flat=True)
+            own_agent = Agent.objects.filter(
+                user=user, tenant=user.tenant,
+            ).values_list('id', flat=True)
+            agent_ids = list(supervised_agents) + list(own_agent)
+            return qs.filter(agent_id__in=agent_ids)
+
+        # Agents see only their own leads
+        from tenancy.models import Agent
+        agent = Agent.objects.filter(user=user, tenant=user.tenant).first()
+        if agent:
+            return qs.filter(agent=agent)
+
+        return qs.none()
 
     def perform_create(self, serializer):
         from tenancy.models import Agent
