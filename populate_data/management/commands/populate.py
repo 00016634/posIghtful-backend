@@ -179,8 +179,11 @@ class Command(BaseCommand):
             Sale.objects.all().delete()
             # Clear telegram tables (raw SQL — may not have Django models)
             from django.db import connection
-            with connection.cursor() as cursor:
-                cursor.execute('TRUNCATE telegram_notification_logs, telegram_profiles CASCADE')
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute('TRUNCATE telegram_notification_logs, telegram_profiles CASCADE')
+            except Exception:
+                pass  # Tables may not exist yet
             LeadStageHistory.objects.all().delete()
             LeadApplication.objects.all().delete()
             Lead.objects.all().delete()
@@ -373,7 +376,7 @@ class Command(BaseCommand):
             # ── Products ───────────────────────────────────────
             self.stdout.write('  Creating products...')
             product_objs = []
-            product_setup_date = setup_date + datetime.timedelta(hours=random.randint(1, 12))
+            product_setup_date = now - datetime.timedelta(days=random.randint(1, 30), hours=random.randint(1, 12))
             for pd in PRODUCTS:
                 prod, _ = Product.objects.update_or_create(
                     tenant=tenant, code=pd['code'],
@@ -399,7 +402,7 @@ class Command(BaseCommand):
                                        role_code, region_name, city_name, agent_code,
                                        parent_agent=None, user_created_at=None):
                 if user_created_at is None:
-                    user_created_at = _random_datetime(now, days_ago_max=300, days_ago_min=30)
+                    user_created_at = _random_datetime(now, days_ago_max=30, days_ago_min=0)
 
                 user, created = User.objects.update_or_create(
                     username=username,
